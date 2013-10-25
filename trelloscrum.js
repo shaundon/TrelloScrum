@@ -17,16 +17,22 @@
 ** Samuel Gaus <https://github.com/gausie>
 **
 */
+/*global chrome */
+/*jshint browser: true, jquery:true */
 
 //default story point picker sequence
 var _pointSeq = ['?', 0, .5, 1, 2, 3, 5, 8, 13, 21];
+
+// Difference story point picker sequence
+var _diffSeq = [-5, -3, -2, -1, 0, 1, 2, 3, 4, 5];
+
 //attributes representing points values for card
-var _pointsAttr = ['cpoints', 'points'];
+var _pointsAttr = ['points', 'cpoints'];
 
 
 //internals
 var reg = /((?:^|\s))\((\x3f|\d*\.?\d+)(\))\s?/m, //parse regexp- accepts digits, decimals and '?', surrounded by ()
-	regC = /((?:^|\s))\[(\x3f|\d*\.?\d+)(\])\s?/m, //parse regexp- accepts digits, decimals and '?', surrounded by []
+	regC = /((?:^|\s))\[(\x3f|\-?\d*\.?\d+)(\])\s?/m, //parse regexp- accepts positive and negative digits, decimals and '?', surrounded by []
 	iconUrl = chrome.extension.getURL('images/storypoints-icon.png'),
 	pointsDoneUrl = chrome.extension.getURL('images/points-done.png');
 
@@ -34,7 +40,7 @@ function round(_val) {return (Math.floor(_val * 100) / 100)};
 
 //what to do when DOM loads
 $(function(){
-	//watch filtering
+
 	$('.js-toggle-label-filter, .js-select-member, .js-due-filter, .js-clear-all').live('mouseup', calcListPoints);
 	$('.js-input').live('keyup', calcListPoints);
 
@@ -69,9 +75,15 @@ function computeTotal(){
 			var score = 0,
 				attr = _pointsAttr[i];
 			$('#board .list-total .'+attr).each(function(){
-				score+=parseFloat(this.textContent)||0;
+
+				var currentScore = parseFloat(this.textContent || 0);
+
+				score+=currentScore;
 			});
-			$total.append('<span class="'+attr+'">'+(round(score)||'')+'</span>');
+
+			var sign = (attr === 'cpoints' && score > 0) ? '+' : '';
+
+			$total.append('<span class="'+attr+'">'+ sign + (round(score) || '') + '</span>');
 		}
 	});
 };
@@ -121,11 +133,20 @@ function List(el){
 				var score=0,
 					attr = _pointsAttr[i];
 				$list.find('.list-card:not(.placeholder):visible').each(function(){
-					if(!this.listCard) return;
-					if(!isNaN(Number(this.listCard[attr].points)))score+=Number(this.listCard[attr].points)
+					if(!this.listCard) 
+						return;
+
+					if(!isNaN(Number(this.listCard[attr].points))) {
+						score+=Number(this.listCard[attr].points)
+					}
 				});
 				var scoreTruncated = round(score);
-				$total.append('<span class="'+attr+'">'+(scoreTruncated>0?scoreTruncated:'')+'</span>');
+
+				// Sign to display, only show a '+' if
+				// this is cpoints and it's positive.
+				var sign = (attr === 'cpoints' && scoreTruncated > 0) ? '+' : '';
+
+				$total.append('<span class="'+attr+'">' + sign + scoreTruncated +'</span>');
 				computeTotal();
 			}
 		});
@@ -181,7 +202,7 @@ function ListCard(el, identifier){
 					.text(that.points)
 					[(consumed?'add':'remove')+'Class']('consumed')
 					.attr({title: 'This card has '+that.points+ (consumed?' consumed':'')+' storypoint' + (that.points == 1 ? '.' : 's.')})
-					.prependTo($card.find('.badges'));
+					.appendTo($card.find('.badges'));
 
 				//only update title text and list totals once
 				if(!consumed) {
@@ -198,7 +219,7 @@ function ListCard(el, identifier){
 		return parsed?points:''
 	});
 
-	if(!consumed) el.addEventListener('DOMNodeInserted',function(e){
+	el.addEventListener('DOMNodeInserted',function(e){
 		if(/card-short-id/.test(e.target.className) && !busy)
 			that.refresh();
 	});
@@ -208,23 +229,65 @@ function ListCard(el, identifier){
 
 //the story point picker
 function showPointPicker() {
+	var i;
 	if($(this).find('.picker').length) return;
-	var $picker = $('<div class="picker">').appendTo('.card-detail-title .edit-controls');
-	for (var i in _pointSeq) $picker.append($('<span class="point-value">').text(_pointSeq[i]).click(function(){
-		var value = $(this).text();
+
+	var $controls = $('.card-detail-title .edit-controls');
+
+	var $estimated = $('<div class="picker first-picker"><span class="quiet">Estimated </span>').appendTo($controls);
+	for (i in _pointSeq) $estimated.append(createPointButton(_pointSeq[i], false));
+	var $consumed = $('<div class="consumed picker"><span class="quiet">Difference </span>').appendTo($controls);
+	for (i in _diffSeq) $consumed.append(createPointButton(_diffSeq[i], true));
+
+	// Display some help text.
+	var helpText = 
+	'<div class="story-points-help clearfix">' + 
+	  '<p class="title">SCRUM Help</p>' +
+	  '<p>' +
+	    '<em>Estimated</em> is how many points it\'s anticipated this story will consume.' + 
+	  '</p>' +
+	  '<p>' +
+	    'If the story consumes more or less story points than what was estimated, use ' +
+	    '<em>Difference</em> to adjust.' + 
+	  '</p>' +
+	  '<p>' +
+	    '<strong>Example</strong><br/>' +
+	    'A story is estimated to consume 8 points, but actually takes 10. '  + 
+	    '<em>Estimated</em> stays at 8, and <em>difference</em> is set as 2.'  + 
+	  '</p>' +
+	'</div>'
+	  ;
+
+	var $helpText = $(helpText).appendTo($controls);
+}
+
+function createPointButton(points, isConsumed) {
+	var regex, value;
+	if (isConsumed) {
+		regex = regC;
+		value = ' [' + points + ']';
+	} else {
+		regex = reg;
+		value = '(' + points + ') ';
+	}
+
+	return $('<span class="point-value">').text(points).click(function(){
 		var $text = $('.card-detail-title .edit textarea');
 		var text = $text.val();
 
 		// replace our new
-		$text[0].value=text.match(reg)?text.replace(reg, '('+value+') '):'('+value+') ' + text;
+		if (text.match(regex)) {
+			$text[0].value = text.replace(regex, value);
+		} else {
+			$text[0].value = isConsumed ? text + value : value + text;
+		}
 
 		// then click our button so it all gets saved away
 		$(".card-detail-title .edit .js-save-edit").click();
 
-		return false
-	}))
-};
-
+		return false;
+	});
+}
 
 //for export
 var $excel_btn,$excel_dl;
@@ -290,4 +353,3 @@ function showExcelExport() {
 
 	return false
 };
-
