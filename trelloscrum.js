@@ -242,7 +242,7 @@ function showPointPicker() {
 	// Display some help text.
 	var helpText = 
 	'<div class="story-points-help clearfix">' + 
-	  '<p class="title">SCRUM Help</p>' +
+	  '<p class="title">Scrum Help</p>' +
 	  '<p>' +
 	    '<em>Estimated</em> is how many points it\'s anticipated this story will consume.' + 
 	  '</p>' +
